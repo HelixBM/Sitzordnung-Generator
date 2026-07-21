@@ -43,7 +43,7 @@ const HORSESHOE_FRONT_MIN_X = 0.3;
 const HORSESHOE_FRONT_MAX_X = 0.7;
 const EXPORT_LEFT = 32;
 const EXPORT_RIGHT = STAGE_W - 32;
-const EXPORT_TOP = 98;
+const EXPORT_TOP = 32;
 const EXPORT_BOTTOM = STAGE_H - 92;
 
 type ExportPlacement = Table & { width: number; height: number; scale: number };
@@ -142,7 +142,9 @@ function constrainTablePosition(layoutType: LayoutType, x: number, y: number) {
 
 function exportFootprint(table: Table, scale: number) {
   const isSideways = table.rotation % 180 !== 0;
-  const horizontal = table.type === "double" ? { width: 176, height: 64 } : { width: 72, height: 104 };
+  // A single seat sits below its tabletop, so use a symmetric bound large
+  // enough to cover that offset on either side of the table centre.
+  const horizontal = table.type === "double" ? { width: 176, height: 64 } : { width: 72, height: 136 };
   return {
     width: (isSideways ? horizontal.height : horizontal.width) * scale,
     height: (isSideways ? horizontal.width : horizontal.height) * scale,
@@ -246,8 +248,8 @@ function createLayout(layoutType: LayoutType, classSize: number, targetSeats: nu
       const row = Math.floor(group / columns);
       const centerX = 0.22 + col * (0.56 / Math.max(1, columns - 1));
       const centerY = 0.25 + row * (0.42 / Math.max(1, rows - 1));
-      if (tables.length < tableTypes.length) add(centerX - 0.065, centerY, undefined, 90);
-      if (tables.length < tableTypes.length) add(centerX + 0.065, centerY, undefined, 90);
+      if (tables.length < tableTypes.length) add(centerX - 0.065, centerY);
+      if (tables.length < tableTypes.length) add(centerX + 0.065, centerY);
       if (tables.length < tableTypes.length) add(centerX, centerY + 0.09, undefined, 0);
     }
   }
@@ -545,14 +547,8 @@ export default function Home() {
     context.scale(scale, scale);
     context.fillStyle = "#f7f5f0";
     context.fillRect(0, 0, STAGE_W, STAGE_H);
-    context.fillStyle = "#1f2937";
-    context.font = "600 24px Arial";
-    context.fillText("Sitzordnung", 32, 42);
-    context.font = "14px Arial";
-    context.fillStyle = "#667085";
-    context.fillText(`${layoutLabels[state.layoutType]} · ${state.classSize} Schüler*innen · ${capacity} Plätze`, 32, 66);
     context.strokeStyle = "#d6d3cc";
-    context.strokeRect(20, 88, STAGE_W - 40, STAGE_H - 108);
+    context.strokeRect(20, 20, STAGE_W - 40, STAGE_H - 40);
     context.fillStyle = "#cfd8df";
     context.fillRect(STAGE_W / 2 - 55, STAGE_H - 58, 110, 24);
     context.fillStyle = "#344054";
