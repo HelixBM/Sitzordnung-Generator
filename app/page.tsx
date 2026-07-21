@@ -41,6 +41,12 @@ const DEFAULT_TOTAL_SEATS = 20;
 const HORSESHOE_FRONT_LIMIT_Y = 0.72;
 const HORSESHOE_FRONT_MIN_X = 0.3;
 const HORSESHOE_FRONT_MAX_X = 0.7;
+const EXPORT_LEFT = 32;
+const EXPORT_RIGHT = STAGE_W - 32;
+const EXPORT_TOP = 98;
+const EXPORT_BOTTOM = STAGE_H - 92;
+
+type ExportPlacement = Table & { width: number; height: number; scale: number };
 
 const layoutLabels: Record<LayoutType, string> = {
   horseshoe: "Hufeisen / U-Form",
@@ -132,6 +138,76 @@ function constrainTablePosition(layoutType: LayoutType, x: number, y: number) {
   }
 
   return clamped;
+}
+
+function exportFootprint(table: Table, scale: number) {
+  const isSideways = table.rotation % 180 !== 0;
+  const horizontal = table.type === "double" ? { width: 176, height: 64 } : { width: 72, height: 104 };
+  return {
+    width: (isSideways ? horizontal.height : horizontal.width) * scale,
+    height: (isSideways ? horizontal.width : horizontal.height) * scale,
+  };
+}
+
+function overlapsExportPlacement(a: ExportPlacement, b: ExportPlacement) {
+  return Math.abs(a.x - b.x) < (a.width + b.width) / 2 && Math.abs(a.y - b.y) < (a.height + b.height) / 2;
+}
+
+function createExportPlacements(tables: Table[]): ExportPlacement[] {
+  const gridStep = 8;
+  const scales = [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1];
+
+  for (const scale of scales) {
+    const placed: ExportPlacement[] = [];
+    let canPlaceEveryTable = true;
+
+    for (const table of tables) {
+      const footprint = exportFootprint(table, scale);
+      const minX = EXPORT_LEFT + footprint.width / 2;
+      const maxX = EXPORT_RIGHT - footprint.width / 2;
+      const minY = EXPORT_TOP + footprint.height / 2;
+      const maxY = EXPORT_BOTTOM - footprint.height / 2;
+      let best: ExportPlacement | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (let y = minY; y <= maxY; y += gridStep) {
+        for (let x = minX; x <= maxX; x += gridStep) {
+          const candidate = { ...table, x, y, ...footprint, scale };
+          if (placed.some((other) => overlapsExportPlacement(candidate, other))) continue;
+          const distance = (x - table.x * STAGE_W) ** 2 + (y - table.y * STAGE_H) ** 2;
+          if (distance < bestDistance) {
+            best = candidate;
+            bestDistance = distance;
+          }
+        }
+      }
+
+      if (!best) {
+        canPlaceEveryTable = false;
+        break;
+      }
+      placed.push(best);
+    }
+
+    if (canPlaceEveryTable) return placed;
+  }
+
+  // This is only reached for an exceptionally large plan. A fixed cell size
+  // keeps every rendered footprint separate even when the page is overfull.
+  return tables.map((table, index) => {
+    const scale = 0.1;
+    const footprint = exportFootprint(table, scale);
+    const cellWidth = 18;
+    const cellHeight = 18;
+    const columns = Math.max(1, Math.floor((EXPORT_RIGHT - EXPORT_LEFT) / cellWidth));
+    return {
+      ...table,
+      x: EXPORT_LEFT + cellWidth / 2 + (index % columns) * cellWidth,
+      y: EXPORT_TOP + cellHeight / 2 + Math.floor(index / columns) * cellHeight,
+      ...footprint,
+      scale,
+    };
+  });
 }
 
 function createLayout(layoutType: LayoutType, classSize: number, targetSeats: number, randomizeAssignments = true): SeatingState {
@@ -483,12 +559,11 @@ export default function Home() {
     context.font = "600 12px Arial";
     context.textAlign = "center";
     context.fillText("LEHRERPULT", STAGE_W / 2, STAGE_H - 42);
-    state.tables.forEach((table) => {
-      const x = table.x * STAGE_W;
-      const y = table.y * STAGE_H;
+    createExportPlacements(state.tables).forEach((table) => {
       context.save();
-      context.translate(x, y);
+      context.translate(table.x, table.y);
       context.rotate((table.rotation * Math.PI) / 180);
+      context.scale(table.scale, table.scale);
       const width = table.type === "double" ? 88 : 62;
       const height = 48;
       context.fillStyle = "#2f8f87";
@@ -499,8 +574,8 @@ export default function Home() {
       context.fillText(table.id, 0, 4);
       const seats = seatsByTable.get(table.id) ?? [];
       seats.forEach((seat, index) => {
-        const seatX = table.type === "double" ? (index === 0 ? -58 : 58) : 0;
-        const seatY = 0;
+        const seatX = table.type === "double" ? (index === 0 ? -67 : 67) : 0;
+        const seatY = table.type === "double" ? 0 : 48;
         context.beginPath();
         context.arc(seatX, seatY, 17, 0, Math.PI * 2);
         context.fillStyle = seat.assigned === null ? "#e9e6df" : "#fffaf0";
