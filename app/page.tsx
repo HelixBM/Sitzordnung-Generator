@@ -122,6 +122,32 @@ function arrangeHorseshoeTables(tables: Table[]) {
   return tables.map((table, index) => ({ ...table, ...horseshoePosition(index, tables.length) }));
 }
 
+function groupPosition(index: number, tableCount: number) {
+  const groupCount = Math.ceil(tableCount / 3);
+  const columns = Math.min(3, groupCount);
+  const group = Math.floor(index / 3);
+  const member = index % 3;
+  const col = group % columns;
+  const row = Math.floor(group / columns);
+  const rows = Math.ceil(groupCount / columns);
+  const centerX = 0.22 + col * (0.56 / Math.max(1, columns - 1));
+  const centerY = 0.25 + row * (0.42 / Math.max(1, rows - 1));
+
+  if (member === 0) return { x: centerX - 0.065, y: centerY, rotation: 0 };
+  if (member === 1) return { x: centerX + 0.065, y: centerY, rotation: 0 };
+  return { x: centerX, y: centerY + 0.09, rotation: 0 };
+}
+
+function arrangeGroupTables(tables: Table[]) {
+  return tables.map((table, index) => ({ ...table, ...groupPosition(index, tables.length) }));
+}
+
+function arrangeTablesForLayout(layoutType: LayoutType, tables: Table[]) {
+  if (layoutType === "horseshoe") return arrangeHorseshoeTables(tables);
+  if (layoutType === "groups") return arrangeGroupTables(tables);
+  return tables;
+}
+
 function constrainTablePosition(layoutType: LayoutType, x: number, y: number) {
   const clamped = {
     x: Math.max(0.06, Math.min(0.94, x)),
@@ -194,18 +220,25 @@ function createExportPlacements(tables: Table[]): ExportPlacement[] {
     if (canPlaceEveryTable) return placed;
   }
 
-  // This is only reached for an exceptionally large plan. A fixed cell size
-  // keeps every rendered footprint separate even when the page is overfull.
+  // For exceptionally large plans, reduce a fixed grid until every footprint
+  // fits within the PNG boundary without intersecting another grid cell.
+  let scale = 0.1;
+  let cellSize = 176 * scale;
+  let columns = Math.max(1, Math.floor((EXPORT_RIGHT - EXPORT_LEFT) / cellSize));
+  let rows = Math.max(1, Math.floor((EXPORT_BOTTOM - EXPORT_TOP) / cellSize));
+  while (columns * rows < tables.length) {
+    scale *= 0.9;
+    cellSize = 176 * scale;
+    columns = Math.max(1, Math.floor((EXPORT_RIGHT - EXPORT_LEFT) / cellSize));
+    rows = Math.max(1, Math.floor((EXPORT_BOTTOM - EXPORT_TOP) / cellSize));
+  }
+
   return tables.map((table, index) => {
-    const scale = 0.1;
     const footprint = exportFootprint(table, scale);
-    const cellWidth = 18;
-    const cellHeight = 18;
-    const columns = Math.max(1, Math.floor((EXPORT_RIGHT - EXPORT_LEFT) / cellWidth));
     return {
       ...table,
-      x: EXPORT_LEFT + cellWidth / 2 + (index % columns) * cellWidth,
-      y: EXPORT_TOP + cellHeight / 2 + Math.floor(index / columns) * cellHeight,
+      x: EXPORT_LEFT + cellSize / 2 + (index % columns) * cellSize,
+      y: EXPORT_TOP + cellSize / 2 + Math.floor(index / columns) * cellSize,
       ...footprint,
       scale,
     };
@@ -240,17 +273,9 @@ function createLayout(layoutType: LayoutType, classSize: number, targetSeats: nu
       }
     }
   } else {
-    const groupCount = Math.ceil(tableTypes.length / 3);
-    const columns = Math.min(3, groupCount);
-    const rows = Math.ceil(groupCount / columns);
-    for (let group = 0; group < groupCount; group += 1) {
-      const col = group % columns;
-      const row = Math.floor(group / columns);
-      const centerX = 0.22 + col * (0.56 / Math.max(1, columns - 1));
-      const centerY = 0.25 + row * (0.42 / Math.max(1, rows - 1));
-      if (tables.length < tableTypes.length) add(centerX - 0.065, centerY);
-      if (tables.length < tableTypes.length) add(centerX + 0.065, centerY);
-      if (tables.length < tableTypes.length) add(centerX, centerY + 0.09, undefined, 0);
+    for (let i = 0; i < tableTypes.length; i += 1) {
+      const position = groupPosition(i, tableTypes.length);
+      add(position.x, position.y, undefined, position.rotation);
     }
   }
 
@@ -313,9 +338,7 @@ function syncCapacity(current: SeatingState, targetSeats: number): SeatingState 
     tables.pop();
   }
 
-  if (current.layoutType === "horseshoe") {
-    tables = arrangeHorseshoeTables(tables);
-  }
+  tables = arrangeTablesForLayout(current.layoutType, tables);
 
   const seats = makeSeats(tables, current.seats);
   return { ...current, targetSeats: normalized, tables, seats, nextTableNumber, nextSeatNumber: seats.length + 1 };
@@ -324,7 +347,7 @@ function syncCapacity(current: SeatingState, targetSeats: number): SeatingState 
 function normalizeStoredState(stored: SeatingState): SeatingState {
   const targetSeats = asPositiveInteger(stored.targetSeats ?? stored.seats?.length, DEFAULT_TOTAL_SEATS);
   const storedTables = stored.tables ?? [];
-  const tables = stored.layoutType === "horseshoe" ? arrangeHorseshoeTables(storedTables) : storedTables;
+  const tables = arrangeTablesForLayout(stored.layoutType, storedTables);
   const seats = makeSeats(tables, stored.seats);
 
   return {
@@ -446,9 +469,7 @@ export default function Home() {
 
   function changeLayout(value: LayoutType) {
     setState((current) => {
-      if (value !== "horseshoe") return { ...current, layoutType: value };
-
-      const tables = arrangeHorseshoeTables(current.tables);
+      const tables = arrangeTablesForLayout(value, current.tables);
       const seats = makeSeats(tables, current.seats);
       return { ...current, layoutType: value, targetSeats: seats.length, tables, seats, nextSeatNumber: seats.length + 1 };
     });
@@ -496,9 +517,10 @@ export default function Home() {
       const table = current.tables.find((item) => item.id === selectedTableId);
       if (!table) return current;
       const type: TableType = table.type === "double" ? "single" : "double";
-      const tables = current.layoutType === "horseshoe"
-        ? arrangeHorseshoeTables(current.tables.map((item) => item.id === selectedTableId ? { ...item, type } : item))
-        : current.tables.map((item) => item.id === selectedTableId ? { ...item, type } : item);
+      const tables = arrangeTablesForLayout(
+        current.layoutType,
+        current.tables.map((item) => item.id === selectedTableId ? { ...item, type } : item),
+      );
       const seats = makeSeats(tables, current.seats);
       return { ...current, targetSeats: seats.length, tables, seats, nextSeatNumber: seats.length + 1 };
     });
@@ -508,7 +530,7 @@ export default function Home() {
     const x = 0.5 + (Math.random() - 0.5) * 0.2;
     const y = 0.5 + (Math.random() - 0.5) * 0.2;
     const table: Table = { id: `T${state.nextTableNumber}`, type, x, y, rotation: 0 };
-    const tables = state.layoutType === "horseshoe" ? arrangeHorseshoeTables([...state.tables, table]) : [...state.tables, table];
+    const tables = arrangeTablesForLayout(state.layoutType, [...state.tables, table]);
     const seats = makeSeats(tables, state.seats);
     setState({ ...state, targetSeats: seats.length, tables, seats, nextTableNumber: state.nextTableNumber + 1, nextSeatNumber: seats.length + 1 });
     setSelectedTableId(table.id);
@@ -516,9 +538,7 @@ export default function Home() {
 
   function deleteSelected() {
     if (!selectedTableId) return;
-    const tables = state.layoutType === "horseshoe"
-      ? arrangeHorseshoeTables(state.tables.filter((table) => table.id !== selectedTableId))
-      : state.tables.filter((table) => table.id !== selectedTableId);
+    const tables = arrangeTablesForLayout(state.layoutType, state.tables.filter((table) => table.id !== selectedTableId));
     const seats = makeSeats(tables, state.seats.filter((seat) => seat.tableId !== selectedTableId));
     setState({ ...state, targetSeats: seats.length, tables, seats, nextSeatNumber: seats.length + 1 });
     setSelectedTableId(null);
