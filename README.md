@@ -7,7 +7,8 @@ Eine responsive Browser-App zum Erstellen, Verschieben und Randomisieren von Sit
 - Hufeisen/U-Form, Reihen mit Mittelgang und Gruppentische
 - Standardmäßig Doppeltische; Einzeltische können hinzugefügt werden
 - Statische Tisch- und Platz-IDs
-- Zufallszahlen von 1 bis maximal 30 ohne doppelte Vergabe
+- Zufallszahlen von 1 bis zur Klassengröße ohne doppelte Vergabe
+- Frei einstellbare Gesamtzahl an Plätzen ohne 30er-Begrenzung
 - Zufällig verteilte leere Plätze
 - Tische per Maus oder Touch verschieben und drehen
 - Einzelne Plätze durch Anklicken tauschen
@@ -31,4 +32,4 @@ npm run build:github-pages
 
 ## Verwendung
 
-Die Klassengröße eingeben, eine Vorlage auswählen und **Neue Sitzordnung anlegen** klicken. Mit **Neu erzeugen** werden die Schülernummern neu verteilt. Zum manuellen Tauschen zwei Plätze nacheinander anklicken.
+Die Klassengröße und die gewünschte Gesamtzahl an Plätzen eingeben, eine Vorlage auswählen und **Neue Sitzordnung anlegen** klicken. Mit **Neu erzeugen** werden die Schülernummern neu verteilt. Zum manuellen Tauschen zwei Plätze nacheinander anklicken.

@@ -23,6 +23,7 @@ type Table = {
 type SeatingState = {
   layoutType: LayoutType;
   classSize: number;
+  targetSeats: number;
   tables: Table[];
   seats: Seat[];
   nextTableNumber: number;
@@ -34,6 +35,11 @@ type DragState = { tableId: string; dx: number; dy: number } | null;
 const STORAGE_KEY = "sitzordnung-randomizer-v1";
 const STAGE_W = 1000;
 const STAGE_H = 680;
+const DEFAULT_CLASS_SIZE = 18;
+const DEFAULT_TOTAL_SEATS = 20;
+const HORSESHOE_FRONT_LIMIT_Y = 0.72;
+const HORSESHOE_FRONT_MIN_X = 0.3;
+const HORSESHOE_FRONT_MAX_X = 0.7;
 
 const layoutLabels: Record<LayoutType, string> = {
   horseshoe: "Hufeisen / U-Form",
@@ -64,39 +70,93 @@ function makeSeats(tables: Table[], previous?: Seat[]) {
   });
 }
 
-function createLayout(layoutType: LayoutType, classSize: number, tableType: TableType = "double", randomizeAssignments = true): SeatingState {
+function asPositiveInteger(value: number, fallback: number) {
+  return Math.max(1, Math.floor(Number.isFinite(value) ? value : fallback));
+}
+
+function tableTypesForCapacity(totalSeats: number) {
+  const normalized = asPositiveInteger(totalSeats, DEFAULT_TOTAL_SEATS);
+  const types = Array.from({ length: Math.floor(normalized / 2) }, () => "double" as TableType);
+  if (normalized % 2 === 1) types.push("single");
+  return types.length ? types : (["single"] as TableType[]);
+}
+
+function horseshoePosition(index: number, tableCount: number) {
+  const topCount = Math.max(1, Math.ceil(tableCount / 2));
+  const sideCount = tableCount - topCount;
+  const leftCount = Math.ceil(sideCount / 2);
+
+  if (index < topCount) {
+    return {
+      x: topCount === 1 ? 0.5 : 0.16 + (index * 0.68) / (topCount - 1),
+      y: 0.18,
+      rotation: 0,
+    };
+  }
+
+  const sideIndex = index - topCount;
+  const isLeft = sideIndex < leftCount;
+  const indexOnSide = isLeft ? sideIndex : sideIndex - leftCount;
+  const countOnSide = isLeft ? leftCount : sideCount - leftCount;
+
+  return {
+    x: isLeft ? 0.12 : 0.88,
+    y: 0.36 + (indexOnSide * 0.34) / Math.max(1, countOnSide - 1),
+    rotation: 90,
+  };
+}
+
+function arrangeHorseshoeTables(tables: Table[]) {
+  return tables.map((table, index) => ({ ...table, ...horseshoePosition(index, tables.length) }));
+}
+
+function constrainTablePosition(layoutType: LayoutType, x: number, y: number) {
+  const clamped = {
+    x: Math.max(0.06, Math.min(0.94, x)),
+    y: Math.max(0.08, Math.min(0.92, y)),
+  };
+
+  if (
+    layoutType === "horseshoe" &&
+    clamped.y > HORSESHOE_FRONT_LIMIT_Y &&
+    clamped.x >= HORSESHOE_FRONT_MIN_X &&
+    clamped.x <= HORSESHOE_FRONT_MAX_X
+  ) {
+    return { ...clamped, y: HORSESHOE_FRONT_LIMIT_Y };
+  }
+
+  return clamped;
+}
+
+function createLayout(layoutType: LayoutType, classSize: number, targetSeats: number, randomizeAssignments = true): SeatingState {
   const tables: Table[] = [];
   let tableNumber = 1;
+  const tableTypes = tableTypesForCapacity(targetSeats);
+  let typeIndex = 0;
 
-  const add = (x: number, y: number, type = tableType, rotation = 0) => {
+  const add = (x: number, y: number, type = tableTypes[typeIndex] ?? "double", rotation = 0) => {
     tables.push({ id: `T${tableNumber}`, type, x, y, rotation });
     tableNumber += 1;
+    typeIndex += 1;
   };
 
   if (layoutType === "horseshoe") {
-    const tableCount = Math.max(10, Math.ceil(classSize / 2));
-    const topCount = Math.ceil(tableCount / 2);
-    const sideCount = Math.floor((tableCount - topCount) / 2);
-    for (let i = 0; i < topCount; i += 1) {
-      const x = 0.16 + (i * 0.68) / Math.max(1, topCount - 1);
-      add(x, 0.18, tableType, 0);
+    const tableCount = tableTypes.length;
+    for (let i = 0; i < tableCount; i += 1) {
+      const position = horseshoePosition(i, tableCount);
+      add(position.x, position.y, undefined, position.rotation);
     }
-    for (let i = 0; i < sideCount; i += 1) {
-      add(0.12, 0.38 + (i * 0.34) / Math.max(1, sideCount - 1), tableType, 90);
-      add(0.88, 0.38 + (i * 0.34) / Math.max(1, sideCount - 1), tableType, 90);
-    }
-    while (tables.length < tableCount) add(0.5, 0.8, tableType, 0);
   } else if (layoutType === "rows") {
-    const rows = 4;
+    const rows = Math.ceil(tableTypes.length / 4);
+    const xs = [0.17, 0.30, 0.70, 0.83];
     for (let row = 0; row < rows; row += 1) {
-      const y = 0.18 + row * 0.19;
-      add(0.17, y);
-      add(0.30, y);
-      add(0.70, y);
-      add(0.83, y);
+      const y = 0.16 + (row * 0.66) / Math.max(1, rows - 1);
+      for (const x of xs) {
+        if (tables.length < tableTypes.length) add(x, y);
+      }
     }
   } else {
-    const groupCount = Math.max(3, Math.ceil(classSize / 6));
+    const groupCount = Math.ceil(tableTypes.length / 3);
     const columns = Math.min(3, groupCount);
     const rows = Math.ceil(groupCount / columns);
     for (let group = 0; group < groupCount; group += 1) {
@@ -104,16 +164,17 @@ function createLayout(layoutType: LayoutType, classSize: number, tableType: Tabl
       const row = Math.floor(group / columns);
       const centerX = 0.22 + col * (0.56 / Math.max(1, columns - 1));
       const centerY = 0.25 + row * (0.42 / Math.max(1, rows - 1));
-      add(centerX - 0.065, centerY, "double", 90);
-      add(centerX + 0.065, centerY, "double", 90);
-      add(centerX, centerY + 0.09, "double", 0);
+      if (tables.length < tableTypes.length) add(centerX - 0.065, centerY, undefined, 90);
+      if (tables.length < tableTypes.length) add(centerX + 0.065, centerY, undefined, 90);
+      if (tables.length < tableTypes.length) add(centerX, centerY + 0.09, undefined, 0);
     }
   }
 
   const seats = makeSeats(tables);
   const state: SeatingState = {
     layoutType,
-    classSize,
+    classSize: asPositiveInteger(classSize, DEFAULT_CLASS_SIZE),
+    targetSeats: asPositiveInteger(targetSeats, DEFAULT_TOTAL_SEATS),
     tables,
     seats,
     nextTableNumber: tableNumber,
@@ -137,8 +198,64 @@ function tableCapacity(type: TableType) {
   return type === "double" ? 2 : 1;
 }
 
+function totalCapacity(tables: Table[]) {
+  return tables.reduce((sum, table) => sum + tableCapacity(table.type), 0);
+}
+
+function syncCapacity(current: SeatingState, targetSeats: number): SeatingState {
+  const normalized = asPositiveInteger(targetSeats, current.targetSeats);
+  let tables = [...current.tables];
+  let nextTableNumber = current.nextTableNumber;
+
+  while (totalCapacity(tables) < normalized) {
+    const remaining = normalized - totalCapacity(tables);
+    tables.push({
+      id: `T${nextTableNumber}`,
+      type: remaining === 1 ? "single" : "double",
+      x: 0.5 + (Math.random() - 0.5) * 0.2,
+      y: 0.5 + (Math.random() - 0.5) * 0.2,
+      rotation: 0,
+    });
+    nextTableNumber += 1;
+  }
+
+  while (totalCapacity(tables) > normalized && tables.length > 0) {
+    const overflow = totalCapacity(tables) - normalized;
+    const last = tables[tables.length - 1];
+    if (overflow === 1 && last.type === "double") {
+      tables[tables.length - 1] = { ...last, type: "single" };
+      break;
+    }
+    tables.pop();
+  }
+
+  if (current.layoutType === "horseshoe") {
+    tables = arrangeHorseshoeTables(tables);
+  }
+
+  const seats = makeSeats(tables, current.seats);
+  return { ...current, targetSeats: normalized, tables, seats, nextTableNumber, nextSeatNumber: seats.length + 1 };
+}
+
+function normalizeStoredState(stored: SeatingState): SeatingState {
+  const targetSeats = asPositiveInteger(stored.targetSeats ?? stored.seats?.length, DEFAULT_TOTAL_SEATS);
+  const storedTables = stored.tables ?? [];
+  const tables = stored.layoutType === "horseshoe" ? arrangeHorseshoeTables(storedTables) : storedTables;
+  const seats = makeSeats(tables, stored.seats);
+
+  return {
+    ...stored,
+    classSize: asPositiveInteger(stored.classSize, DEFAULT_CLASS_SIZE),
+    targetSeats,
+    tables,
+    seats,
+    nextTableNumber: stored.nextTableNumber ?? tables.length + 1,
+    nextSeatNumber: seats.length + 1,
+  };
+}
+
 export default function Home() {
-  const [state, setState] = useState<SeatingState>(() => createLayout("horseshoe", 18, "double", false));
+  const [state, setState] = useState<SeatingState>(() => createLayout("horseshoe", DEFAULT_CLASS_SIZE, DEFAULT_TOTAL_SEATS, false));
   const [hydrated, setHydrated] = useState(false);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [selectedSeatId, setSelectedSeatId] = useState<number | null>(null);
@@ -150,7 +267,10 @@ export default function Home() {
       const stored = window.localStorage.getItem(STORAGE_KEY);
       // The first render is deterministic for SSR; browser-local state is loaded immediately after hydration.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (stored) setState(JSON.parse(stored) as SeatingState);
+      if (stored) {
+        const parsed = JSON.parse(stored) as SeatingState;
+        setState(normalizeStoredState(parsed));
+      }
       else setState((current) => distribute(current));
     } catch {
       // A corrupted or unavailable browser store should not block the app.
@@ -175,8 +295,8 @@ export default function Home() {
   }, [state.seats]);
 
   function newLayout() {
-    if (state.classSize < 1 || state.classSize > 30) return;
-    const next = createLayout(state.layoutType, state.classSize);
+    if (state.classSize < 1 || state.targetSeats < 1) return;
+    const next = createLayout(state.layoutType, state.classSize, state.targetSeats);
     setState(next);
     setSelectedTableId(null);
     setSelectedSeatId(null);
@@ -189,12 +309,24 @@ export default function Home() {
   }
 
   function setClassSize(value: number) {
-    const nextSize = Math.max(1, Math.min(30, Number.isFinite(value) ? value : 1));
+    const nextSize = asPositiveInteger(value, state.classSize);
     setState((current) => ({ ...current, classSize: nextSize }));
   }
 
+  function setTargetSeats(value: number) {
+    setState((current) => syncCapacity(current, value));
+    setSelectedTableId(null);
+    setSelectedSeatId(null);
+  }
+
   function changeLayout(value: LayoutType) {
-    setState((current) => ({ ...current, layoutType: value }));
+    setState((current) => {
+      if (value !== "horseshoe") return { ...current, layoutType: value };
+
+      const tables = arrangeHorseshoeTables(current.tables);
+      const seats = makeSeats(tables, current.seats);
+      return { ...current, layoutType: value, targetSeats: seats.length, tables, seats, nextSeatNumber: seats.length + 1 };
+    });
   }
 
   function startDrag(event: PointerEvent<HTMLDivElement>, table: Table) {
@@ -216,11 +348,11 @@ export default function Home() {
     const pointerY = ((event.clientY - rect.top) / rect.height) * 100;
     setState((current) => ({
       ...current,
-      tables: current.tables.map((table) =>
-        table.id === drag.tableId
-          ? { ...table, x: Math.max(0.06, Math.min(0.94, (pointerX - drag.dx) / 100)), y: Math.max(0.08, Math.min(0.92, (pointerY - drag.dy) / 100)) }
-          : table,
-      ),
+      tables: current.tables.map((table) => {
+        if (table.id !== drag.tableId) return table;
+        const position = constrainTablePosition(current.layoutType, (pointerX - drag.dx) / 100, (pointerY - drag.dy) / 100);
+        return { ...table, ...position };
+      }),
     }));
   }
 
@@ -239,9 +371,11 @@ export default function Home() {
       const table = current.tables.find((item) => item.id === selectedTableId);
       if (!table) return current;
       const type: TableType = table.type === "double" ? "single" : "double";
-      const tables = current.tables.map((item) => item.id === selectedTableId ? { ...item, type } : item);
+      const tables = current.layoutType === "horseshoe"
+        ? arrangeHorseshoeTables(current.tables.map((item) => item.id === selectedTableId ? { ...item, type } : item))
+        : current.tables.map((item) => item.id === selectedTableId ? { ...item, type } : item);
       const seats = makeSeats(tables, current.seats);
-      return { ...current, tables, seats, nextSeatNumber: seats.length + 1 };
+      return { ...current, targetSeats: seats.length, tables, seats, nextSeatNumber: seats.length + 1 };
     });
   }
 
@@ -249,16 +383,19 @@ export default function Home() {
     const x = 0.5 + (Math.random() - 0.5) * 0.2;
     const y = 0.5 + (Math.random() - 0.5) * 0.2;
     const table: Table = { id: `T${state.nextTableNumber}`, type, x, y, rotation: 0 };
-    const seats = makeSeats([...state.tables, table], state.seats);
-    setState({ ...state, tables: [...state.tables, table], seats, nextTableNumber: state.nextTableNumber + 1, nextSeatNumber: seats.length + 1 });
+    const tables = state.layoutType === "horseshoe" ? arrangeHorseshoeTables([...state.tables, table]) : [...state.tables, table];
+    const seats = makeSeats(tables, state.seats);
+    setState({ ...state, targetSeats: seats.length, tables, seats, nextTableNumber: state.nextTableNumber + 1, nextSeatNumber: seats.length + 1 });
     setSelectedTableId(table.id);
   }
 
   function deleteSelected() {
     if (!selectedTableId) return;
-    const tables = state.tables.filter((table) => table.id !== selectedTableId);
+    const tables = state.layoutType === "horseshoe"
+      ? arrangeHorseshoeTables(state.tables.filter((table) => table.id !== selectedTableId))
+      : state.tables.filter((table) => table.id !== selectedTableId);
     const seats = makeSeats(tables, state.seats.filter((seat) => seat.tableId !== selectedTableId));
-    setState({ ...state, tables, seats, nextSeatNumber: seats.length + 1 });
+    setState({ ...state, targetSeats: seats.length, tables, seats, nextSeatNumber: seats.length + 1 });
     setSelectedTableId(null);
   }
 
@@ -375,8 +512,14 @@ export default function Home() {
 
           <label className="field-label" htmlFor="classSize">Klassengröße</label>
           <div className="number-field">
-            <input id="classSize" type="number" min="1" max="30" value={state.classSize} onChange={(event) => setClassSize(Number(event.target.value))} />
-            <span>von 30</span>
+            <input id="classSize" type="number" min="1" value={state.classSize} onChange={(event) => setClassSize(Number(event.target.value))} />
+            <span>Schüler*innen</span>
+          </div>
+
+          <label className="field-label" htmlFor="targetSeats">Plätze gesamt</label>
+          <div className="number-field">
+            <input id="targetSeats" type="number" min="1" value={state.targetSeats} onChange={(event) => setTargetSeats(Number(event.target.value))} />
+            <span>{capacity} aktuell</span>
           </div>
 
           <label className="field-label" htmlFor="layoutType">Sitzordnung</label>
@@ -388,7 +531,7 @@ export default function Home() {
 
           <div className="template-note">
             <span className="note-icon">i</span>
-            <p>{state.layoutType === "horseshoe" ? "Automatisch: Hufeisen mit mindestens 20 Plätzen." : state.layoutType === "rows" ? "Vorlage: vier Reihen, Mittelgang, je zwei Doppeltische pro Seite." : "Vorlage: Gruppen aus maximal drei Doppeltischen mit bis zu sechs Plätzen."}</p>
+            <p>{state.layoutType === "horseshoe" ? "Automatisch: Hufeisen mit der gewählten Gesamtzahl an Plätzen." : state.layoutType === "rows" ? "Vorlage: Reihen mit Mittelgang und der gewählten Gesamtzahl an Plätzen." : "Vorlage: Gruppen aus Doppeltischen mit der gewählten Gesamtzahl an Plätzen."}</p>
           </div>
 
           <button className="button button-primary button-wide" onClick={newLayout}>Neue Sitzordnung anlegen <span>→</span></button>
