@@ -31,6 +31,7 @@ type SeatingState = {
 };
 
 type DragState = { tableId: string; dx: number; dy: number } | null;
+type NumberField = "classSize" | "targetSeats";
 
 const STORAGE_KEY = "sitzordnung-randomizer-v1";
 const STAGE_W = 1000;
@@ -72,6 +73,11 @@ function makeSeats(tables: Table[], previous?: Seat[]) {
 
 function asPositiveInteger(value: number, fallback: number) {
   return Math.max(1, Math.floor(Number.isFinite(value) ? value : fallback));
+}
+
+function parsePositiveIntegerInput(value: string) {
+  if (!/^\d+$/.test(value.trim())) return null;
+  return Math.max(1, Math.floor(Number(value)));
 }
 
 function tableTypesForCapacity(totalSeats: number) {
@@ -259,6 +265,9 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [selectedSeatId, setSelectedSeatId] = useState<number | null>(null);
+  const [focusedNumberField, setFocusedNumberField] = useState<NumberField | null>(null);
+  const [classSizeInput, setClassSizeInput] = useState(String(DEFAULT_CLASS_SIZE));
+  const [targetSeatsInput, setTargetSeatsInput] = useState(String(DEFAULT_TOTAL_SEATS));
   const [drag, setDrag] = useState<DragState>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
@@ -282,6 +291,14 @@ export default function Home() {
   useEffect(() => {
     if (hydrated) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state, hydrated]);
+
+  useEffect(() => {
+    // Keep editable drafts in sync with table edits, saved state, and layout changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (focusedNumberField !== "classSize") setClassSizeInput(String(state.classSize));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (focusedNumberField !== "targetSeats") setTargetSeatsInput(String(state.targetSeats));
+  }, [focusedNumberField, state.classSize, state.targetSeats]);
 
   const capacity = state.seats.length;
   const emptyCount = Math.max(0, capacity - state.classSize);
@@ -317,6 +334,36 @@ export default function Home() {
     setState((current) => syncCapacity(current, value));
     setSelectedTableId(null);
     setSelectedSeatId(null);
+  }
+
+  function changeClassSizeInput(value: string) {
+    setClassSizeInput(value);
+    const nextSize = parsePositiveIntegerInput(value);
+    if (nextSize !== null) {
+      setState((current) => ({ ...current, classSize: nextSize }));
+    }
+  }
+
+  function commitClassSizeInput() {
+    const nextSize = parsePositiveIntegerInput(classSizeInput) ?? state.classSize;
+    setClassSize(nextSize);
+    setClassSizeInput(String(nextSize));
+    setFocusedNumberField(null);
+  }
+
+  function changeTargetSeatsInput(value: string) {
+    setTargetSeatsInput(value);
+    const nextSeats = parsePositiveIntegerInput(value);
+    if (nextSeats !== null) {
+      setTargetSeats(nextSeats);
+    }
+  }
+
+  function commitTargetSeatsInput() {
+    const nextSeats = parsePositiveIntegerInput(targetSeatsInput) ?? state.targetSeats;
+    setTargetSeats(nextSeats);
+    setTargetSeatsInput(String(nextSeats));
+    setFocusedNumberField(null);
   }
 
   function changeLayout(value: LayoutType) {
@@ -512,13 +559,31 @@ export default function Home() {
 
           <label className="field-label" htmlFor="classSize">Klassengröße</label>
           <div className="number-field">
-            <input id="classSize" type="number" min="1" value={state.classSize} onChange={(event) => setClassSize(Number(event.target.value))} />
+            <input
+              id="classSize"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={classSizeInput}
+              onFocus={() => setFocusedNumberField("classSize")}
+              onBlur={commitClassSizeInput}
+              onChange={(event) => changeClassSizeInput(event.target.value)}
+            />
             <span>Schüler*innen</span>
           </div>
 
           <label className="field-label" htmlFor="targetSeats">Plätze gesamt</label>
           <div className="number-field">
-            <input id="targetSeats" type="number" min="1" value={state.targetSeats} onChange={(event) => setTargetSeats(Number(event.target.value))} />
+            <input
+              id="targetSeats"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={targetSeatsInput}
+              onFocus={() => setFocusedNumberField("targetSeats")}
+              onBlur={commitTargetSeatsInput}
+              onChange={(event) => changeTargetSeatsInput(event.target.value)}
+            />
             <span>{capacity} aktuell</span>
           </div>
 
