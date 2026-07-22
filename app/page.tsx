@@ -138,7 +138,7 @@ function groupPosition(index: number, tableCount: number) {
   // cluster width, so the desk bodies alone are not a sufficient spacing cue.
   if (member === 0) return { x: centerX - 0.075, y: centerY, rotation: 0 };
   if (member === 1) return { x: centerX + 0.075, y: centerY, rotation: 0 };
-  return { x: centerX, y: centerY + 0.11, rotation: 0 };
+  return { x: centerX, y: centerY + 0.14, rotation: 0 };
 }
 
 function arrangeGroupTables(tables: Table[]) {
@@ -626,7 +626,9 @@ export default function Home() {
       const seats = seatsByTable.get(table.id) ?? [];
       seats.forEach((seat, index) => {
         const seatX = table.type === "double" ? (index === 0 ? -67 : 67) : 0;
-        const seatY = table.type === "double" ? 0 : 48;
+        // Seats are deliberately below the tabletop. Keeping them at y=0
+        // made the seat labels overlap the table ID in both editor and PNG.
+        const seatY = 48;
         context.beginPath();
         context.arc(seatX, seatY, 17, 0, Math.PI * 2);
         context.fillStyle = seat.assigned === null ? "#e9e6df" : "#fffaf0";
