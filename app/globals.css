@@ -29,7 +29,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .button:disabled { cursor: not-allowed; opacity: .42; transform: none; }
 .button-wide { width: 100%; justify-content: space-between; margin-top: 16px; }
 .workspace { display: grid; grid-template-columns: 295px minmax(0, 1fr); min-height: calc(100vh - 78px); }
-.sidebar { padding: 31px 24px; border-right: 1px solid var(--line); background: #fbfcfa; }
+.sidebar { display: flex; flex-direction: column; padding: 31px 24px; border-right: 1px solid var(--line); background: #fbfcfa; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
 .section-heading.compact { margin-bottom: 13px; }
 .section-heading h2 { font-size: 20px; }
@@ -40,6 +40,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .number-field span { padding-right: 12px; color: var(--muted); font-family: "DM Mono", monospace; font-size: 10px; white-space: nowrap; }
 .select-field { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; outline: 0; background: white; color: var(--ink); font-size: 13px; }
 .names-input { width: 100%; min-height: 92px; margin-top: 12px; padding: 10px 12px; resize: vertical; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); font: 12px/1.45 "DM Sans", Arial, sans-serif; }
+.names-panel { margin-top: 3px; }
+.names-panel summary { color: var(--teal-dark); cursor: pointer; font-size: 12px; font-weight: 600; }
+.names-panel .helper-text { margin-top: 10px; }
 .template-note { display: flex; gap: 9px; margin-top: 13px; padding: 11px 12px; border-radius: 9px; background: #eff4f2; color: #566767; }
 .template-note p { margin: 0; font-size: 11px; line-height: 1.45; }
 .note-icon { display: grid; flex: 0 0 auto; place-items: center; width: 15px; height: 15px; border: 1px solid #8ca9a4; border-radius: 50%; font-size: 10px; font-weight: 700; }
@@ -54,6 +57,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .selection-card > div:first-child { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
 .selection-card strong { font-family: "DM Mono", monospace; font-size: 12px; }
 .selection-card span { color: var(--muted); font-size: 10px; }
+.sidebar-footer { margin-top: auto; padding-top: 24px; }
 .canvas-area { min-width: 0; padding: 31px 34px 30px; }
 .canvas-toolbar { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 17px; }
 .canvas-toolbar h2 { font-size: 25px; }

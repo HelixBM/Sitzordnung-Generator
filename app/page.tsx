@@ -134,9 +134,11 @@ function groupPosition(index: number, tableCount: number) {
   const centerX = 0.22 + col * (0.56 / Math.max(1, columns - 1));
   const centerY = 0.25 + row * (0.42 / Math.max(1, rows - 1));
 
-  if (member === 0) return { x: centerX - 0.065, y: centerY, rotation: 0 };
-  if (member === 1) return { x: centerX + 0.065, y: centerY, rotation: 0 };
-  return { x: centerX, y: centerY + 0.09, rotation: 0 };
+  // Keep a visible gap between clusters: their seats extend to the full
+  // cluster width, so the desk bodies alone are not a sufficient spacing cue.
+  if (member === 0) return { x: centerX - 0.075, y: centerY, rotation: 0 };
+  if (member === 1) return { x: centerX + 0.075, y: centerY, rotation: 0 };
+  return { x: centerX, y: centerY + 0.11, rotation: 0 };
 }
 
 function arrangeGroupTables(tables: Table[]) {
@@ -669,11 +671,6 @@ export default function Home() {
           <span className="saved-status"><span className="status-dot" /> automatisch gespeichert</span>
           <button className="button button-ghost" disabled={!history.length} onClick={undo} aria-label="Rückgängig">↶</button>
           <button className="button button-ghost" disabled={!future.length} onClick={redo} aria-label="Wiederholen">↷</button>
-          <button className="button button-ghost" onClick={savePlan}>Speichern</button>
-          <button className="button button-ghost" onClick={loadPlan}>Laden</button>
-          <button className="button button-ghost" onClick={downloadBackup}>Backup</button>
-          <button className="button button-ghost" onClick={() => restoreInputRef.current?.click()}>Import</button>
-          <input ref={restoreInputRef} className="sr-only" type="file" accept="application/json" onChange={(event) => restoreBackup(event.target.files?.[0])} />
           <button className="button button-ghost" onClick={exportPng}>PNG exportieren</button>
           <button className="button button-primary" onClick={() => window.print()}>Drucken / PDF</button>
         </div>
@@ -734,16 +731,16 @@ export default function Home() {
           <button className="button button-primary button-wide" onClick={newLayout}>Neue Sitzordnung anlegen <span>→</span></button>
 
           <div className="divider" />
-          <div className="section-heading compact">
-            <div><p className="eyebrow">Klassenliste</p><h2>Namen optional</h2></div>
-          </div>
-          <p className="helper-text">Eine Zeile pro Schüler*in. Ohne Namen bleibt die bewährte Nummernansicht aktiv.</p>
-          <textarea id="studentNames" className="names-input" value={studentNames.join("\n")} placeholder={"Anna Beispiel\nBen Muster"} onChange={(event) => updateNames(event.target.value)} />
-          <label className="field-label" htmlFor="displayMode">Anzeige auf den Plätzen</label>
-          <select id="displayMode" className="select-field" value={state.displayMode ?? "numbers"} onChange={(event) => setState((current) => ({ ...current, displayMode: event.target.value as "numbers" | "names" }))}>
-            <option value="numbers">Nummern</option>
-            <option value="names">Namen (falls vorhanden)</option>
-          </select>
+          <details className="names-panel">
+            <summary>Namen verwenden (optional)</summary>
+            <p className="helper-text">Eine Zeile pro Schüler*in. Ohne Namen bleibt die Nummernansicht aktiv.</p>
+            <textarea id="studentNames" className="names-input" value={studentNames.join("\n")} placeholder={"Anna Beispiel\nBen Muster"} onChange={(event) => updateNames(event.target.value)} />
+            <label className="field-label" htmlFor="displayMode">Anzeige auf den Plätzen</label>
+            <select id="displayMode" className="select-field" value={state.displayMode ?? "numbers"} onChange={(event) => setState((current) => ({ ...current, displayMode: event.target.value as "numbers" | "names" }))}>
+              <option value="numbers">Nummern</option>
+              <option value="names">Namen (falls vorhanden)</option>
+            </select>
+          </details>
 
           <div className="divider" />
           <div className="section-heading compact">
@@ -778,6 +775,17 @@ export default function Home() {
             </div>
           )}
           <p className="helper-text">Tische ziehen oder mit Pfeiltasten verschieben (Shift = große Schritte, R = drehen). Zwei Plätze anklicken zum Tauschen; mit Schloss fixieren.</p>
+
+          <div className="sidebar-footer">
+            <p className="eyebrow">Sicherung</p>
+            <div className="edit-actions">
+              <button className="mini-button" onClick={savePlan}>Plan speichern</button>
+              <button className="mini-button" onClick={loadPlan}>Plan laden</button>
+              <button className="mini-button" onClick={downloadBackup}>Backup exportieren</button>
+              <button className="mini-button" onClick={() => restoreInputRef.current?.click()}>Backup importieren</button>
+              <input ref={restoreInputRef} className="sr-only" type="file" accept="application/json" onChange={(event) => restoreBackup(event.target.files?.[0])} />
+            </div>
+          </div>
         </aside>
 
         <section className="canvas-area">
