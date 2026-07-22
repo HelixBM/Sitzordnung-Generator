@@ -46,6 +46,9 @@ const DEFAULT_TOTAL_SEATS = 20;
 const HORSESHOE_FRONT_LIMIT_Y = 0.72;
 const HORSESHOE_FRONT_MIN_X = 0.3;
 const HORSESHOE_FRONT_MAX_X = 0.7;
+// Includes the desk, the seats below it, and an intentional visual gap to the
+// next table. These dimensions are relative to the stage, not the desk body.
+const MIN_TABLE_GAP = 0.025;
 
 
 const layoutLabels: Record<LayoutType, string> = {
@@ -145,10 +148,47 @@ function arrangeGroupTables(tables: Table[]) {
   return tables.map((table, index) => ({ ...table, ...groupPosition(index, tables.length) }));
 }
 
+function tableSpace(table: Table) {
+  const horizontal = table.type === "double" ? { width: 0.15, height: 0.19 } : { width: 0.11, height: 0.19 };
+  return table.rotation % 180 === 0 ? horizontal : { width: horizontal.height, height: horizontal.width };
+}
+
+function tablesCollide(a: Table, b: Table) {
+  const aSpace = tableSpace(a);
+  const bSpace = tableSpace(b);
+  return Math.abs(a.x - b.x) < (aSpace.width + bSpace.width) / 2 + MIN_TABLE_GAP
+    && Math.abs(a.y - b.y) < (aSpace.height + bSpace.height) / 2 + MIN_TABLE_GAP;
+}
+
+function keepInsideStage(table: Table) {
+  const space = tableSpace(table);
+  return {
+    ...table,
+    x: Math.max(space.width / 2 + MIN_TABLE_GAP, Math.min(1 - space.width / 2 - MIN_TABLE_GAP, table.x)),
+    y: Math.max(space.height / 2 + MIN_TABLE_GAP, Math.min(1 - space.height / 2 - MIN_TABLE_GAP, table.y)),
+  };
+}
+
+function findClearPosition(table: Table, placed: Table[]) {
+  const preferred = keepInsideStage(table);
+  if (!placed.some((other) => tablesCollide(preferred, other))) return preferred;
+
+  let best: Table | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let y = 0.12; y <= 0.88; y += 0.02) {
+    for (let x = 0.10; x <= 0.90; x += 0.02) {
+      const candidate = keepInsideStage({ ...table, x, y });
+      if (placed.some((other) => tablesCollide(candidate, other))) continue;
+      const distance = (candidate.x - preferred.x) ** 2 + (candidate.y - preferred.y) ** 2;
+      if (distance < bestDistance) { best = candidate; bestDistance = distance; }
+    }
+  }
+  return best ?? preferred;
+}
+
 function arrangeTablesForLayout(layoutType: LayoutType, tables: Table[]) {
-  if (layoutType === "horseshoe") return arrangeHorseshoeTables(tables);
-  if (layoutType === "groups") return arrangeGroupTables(tables);
-  return tables;
+  const arranged = layoutType === "horseshoe" ? arrangeHorseshoeTables(tables) : layoutType === "groups" ? arrangeGroupTables(tables) : tables;
+  return arranged.reduce<Table[]>((placed, table) => [...placed, findClearPosition(table, placed)], []);
 }
 
 function constrainTablePosition(layoutType: LayoutType, x: number, y: number) {
@@ -513,7 +553,8 @@ export default function Home() {
       tables: current.tables.map((table) => {
         if (table.id !== drag.tableId) return table;
         const position = constrainTablePosition(current.layoutType, (pointerX - drag.dx) / 100, (pointerY - drag.dy) / 100);
-        return { ...table, ...position };
+        const candidate = keepInsideStage({ ...table, ...position });
+        return current.tables.some((other) => other.id !== table.id && tablesCollide(candidate, other)) ? table : candidate;
       }),
     }));
   }
@@ -524,7 +565,11 @@ export default function Home() {
 
   function rotateSelected() {
     if (!selectedTableId) return;
-    setState((current) => ({ ...current, tables: current.tables.map((table) => table.id === selectedTableId ? { ...table, rotation: (table.rotation + 90) % 360 } : table) }));
+    setState((current) => ({ ...current, tables: current.tables.map((table) => {
+      if (table.id !== selectedTableId) return table;
+      const candidate = keepInsideStage({ ...table, rotation: (table.rotation + 90) % 360 });
+      return current.tables.some((other) => other.id !== table.id && tablesCollide(candidate, other)) ? table : candidate;
+    }) }));
   }
 
   function toggleSelectedCapacity() {
@@ -582,11 +627,20 @@ export default function Home() {
     if (event.target !== event.currentTarget) return;
     const step = event.shiftKey ? 0.03 : 0.01;
     const direction = event.key === "ArrowLeft" ? [-step, 0] : event.key === "ArrowRight" ? [step, 0] : event.key === "ArrowUp" ? [0, -step] : event.key === "ArrowDown" ? [0, step] : null;
-    if (event.key === "r" || event.key === "R") { setSelectedTableId(table.id); setState((current) => ({ ...current, tables: current.tables.map((item) => item.id === table.id ? { ...item, rotation: (item.rotation + 90) % 360 } : item) })); event.preventDefault(); return; }
+    if (event.key === "r" || event.key === "R") { setSelectedTableId(table.id); setState((current) => ({ ...current, tables: current.tables.map((item) => {
+      if (item.id !== table.id) return item;
+      const candidate = keepInsideStage({ ...item, rotation: (item.rotation + 90) % 360 });
+      return current.tables.some((other) => other.id !== item.id && tablesCollide(candidate, other)) ? item : candidate;
+    }) })); event.preventDefault(); return; }
     if (!direction) return;
     event.preventDefault();
     setSelectedTableId(table.id);
-    setState((current) => ({ ...current, tables: current.tables.map((item) => item.id === table.id ? { ...item, ...constrainTablePosition(current.layoutType, item.x + direction[0], item.y + direction[1]) } : item) }));
+    setState((current) => ({ ...current, tables: current.tables.map((item) => {
+      if (item.id !== table.id) return item;
+      const position = constrainTablePosition(current.layoutType, item.x + direction[0], item.y + direction[1]);
+      const candidate = keepInsideStage({ ...item, ...position });
+      return current.tables.some((other) => other.id !== item.id && tablesCollide(candidate, other)) ? item : candidate;
+    }) }));
   }
 
   function exportPng() {
@@ -802,7 +856,6 @@ export default function Home() {
               <span><strong>{emptyCount}</strong> leer</span>
             </div>
           </div>
-          <div className="view-hint"><span className="front-marker">← vorne / Lehrerpult</span><span>Rückwand →</span></div>
           <div ref={stageRef} className="stage" onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} aria-label="Sitzplan-Arbeitsfläche">
             <div className="room-label">RÜCKWAND</div>
             <div className="teacher-desk">LEHRERPULT</div>
