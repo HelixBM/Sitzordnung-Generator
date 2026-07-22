@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, KeyboardEvent, PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type LayoutType = "horseshoe" | "rows" | "groups";
 type TableType = "double" | "single";
@@ -10,6 +10,7 @@ type Seat = {
   tableId: string;
   slot: number;
   assigned: number | null;
+  locked?: boolean;
 };
 
 type Table = {
@@ -28,12 +29,16 @@ type SeatingState = {
   seats: Seat[];
   nextTableNumber: number;
   nextSeatNumber: number;
+  studentNames?: string[];
+  displayMode?: "numbers" | "names";
+  planName?: string;
 };
 
 type DragState = { tableId: string; dx: number; dy: number } | null;
 type NumberField = "classSize" | "targetSeats";
 
-const STORAGE_KEY = "sitzordnung-randomizer-v1";
+const STORAGE_KEY = "sitzordnung-randomizer-v2";
+const PLANS_KEY = "sitzordnung-randomizer-plans-v1";
 const STAGE_W = 1000;
 const STAGE_H = 680;
 const DEFAULT_CLASS_SIZE = 18;
@@ -41,12 +46,7 @@ const DEFAULT_TOTAL_SEATS = 20;
 const HORSESHOE_FRONT_LIMIT_Y = 0.72;
 const HORSESHOE_FRONT_MIN_X = 0.3;
 const HORSESHOE_FRONT_MAX_X = 0.7;
-const EXPORT_LEFT = 32;
-const EXPORT_RIGHT = STAGE_W - 32;
-const EXPORT_TOP = 32;
-const EXPORT_BOTTOM = STAGE_H - 92;
 
-type ExportPlacement = Table & { width: number; height: number; scale: number };
 
 const layoutLabels: Record<LayoutType, string> = {
   horseshoe: "Hufeisen / U-Form",
@@ -64,7 +64,7 @@ function shuffle<T>(items: T[]) {
 }
 
 function makeSeats(tables: Table[], previous?: Seat[]) {
-  const oldAssignments = new Map((previous ?? []).map((seat) => [`${seat.tableId}:${seat.slot}`, seat.assigned]));
+  const oldAssignments = new Map((previous ?? []).map((seat) => [`${seat.tableId}:${seat.slot}`, seat]));
   let id = 1;
   return tables.flatMap((table) => {
     const count = table.type === "double" ? 2 : 1;
@@ -72,7 +72,8 @@ function makeSeats(tables: Table[], previous?: Seat[]) {
       id: id++,
       tableId: table.id,
       slot,
-      assigned: oldAssignments.get(`${table.id}:${slot}`) ?? null,
+      assigned: oldAssignments.get(`${table.id}:${slot}`)?.assigned ?? null,
+      locked: oldAssignments.get(`${table.id}:${slot}`)?.locked ?? false,
     }));
   });
 }
@@ -166,85 +167,6 @@ function constrainTablePosition(layoutType: LayoutType, x: number, y: number) {
   return clamped;
 }
 
-function exportFootprint(table: Table, scale: number) {
-  const isSideways = table.rotation % 180 !== 0;
-  // A single seat sits below its tabletop, so use a symmetric bound large
-  // enough to cover that offset on either side of the table centre.
-  const horizontal = table.type === "double" ? { width: 176, height: 64 } : { width: 72, height: 136 };
-  return {
-    width: (isSideways ? horizontal.height : horizontal.width) * scale,
-    height: (isSideways ? horizontal.width : horizontal.height) * scale,
-  };
-}
-
-function overlapsExportPlacement(a: ExportPlacement, b: ExportPlacement) {
-  return Math.abs(a.x - b.x) < (a.width + b.width) / 2 && Math.abs(a.y - b.y) < (a.height + b.height) / 2;
-}
-
-function createExportPlacements(tables: Table[]): ExportPlacement[] {
-  const gridStep = 8;
-  const scales = [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1];
-
-  for (const scale of scales) {
-    const placed: ExportPlacement[] = [];
-    let canPlaceEveryTable = true;
-
-    for (const table of tables) {
-      const footprint = exportFootprint(table, scale);
-      const minX = EXPORT_LEFT + footprint.width / 2;
-      const maxX = EXPORT_RIGHT - footprint.width / 2;
-      const minY = EXPORT_TOP + footprint.height / 2;
-      const maxY = EXPORT_BOTTOM - footprint.height / 2;
-      let best: ExportPlacement | null = null;
-      let bestDistance = Number.POSITIVE_INFINITY;
-
-      for (let y = minY; y <= maxY; y += gridStep) {
-        for (let x = minX; x <= maxX; x += gridStep) {
-          const candidate = { ...table, x, y, ...footprint, scale };
-          if (placed.some((other) => overlapsExportPlacement(candidate, other))) continue;
-          const distance = (x - table.x * STAGE_W) ** 2 + (y - table.y * STAGE_H) ** 2;
-          if (distance < bestDistance) {
-            best = candidate;
-            bestDistance = distance;
-          }
-        }
-      }
-
-      if (!best) {
-        canPlaceEveryTable = false;
-        break;
-      }
-      placed.push(best);
-    }
-
-    if (canPlaceEveryTable) return placed;
-  }
-
-  // For exceptionally large plans, reduce a fixed grid until every footprint
-  // fits within the PNG boundary without intersecting another grid cell.
-  let scale = 0.1;
-  let cellSize = 176 * scale;
-  let columns = Math.max(1, Math.floor((EXPORT_RIGHT - EXPORT_LEFT) / cellSize));
-  let rows = Math.max(1, Math.floor((EXPORT_BOTTOM - EXPORT_TOP) / cellSize));
-  while (columns * rows < tables.length) {
-    scale *= 0.9;
-    cellSize = 176 * scale;
-    columns = Math.max(1, Math.floor((EXPORT_RIGHT - EXPORT_LEFT) / cellSize));
-    rows = Math.max(1, Math.floor((EXPORT_BOTTOM - EXPORT_TOP) / cellSize));
-  }
-
-  return tables.map((table, index) => {
-    const footprint = exportFootprint(table, scale);
-    return {
-      ...table,
-      x: EXPORT_LEFT + cellSize / 2 + (index % columns) * cellSize,
-      y: EXPORT_TOP + cellSize / 2 + Math.floor(index / columns) * cellSize,
-      ...footprint,
-      scale,
-    };
-  });
-}
-
 function createLayout(layoutType: LayoutType, classSize: number, targetSeats: number, randomizeAssignments = true): SeatingState {
   const tables: Table[] = [];
   let tableNumber = 1;
@@ -294,12 +216,14 @@ function createLayout(layoutType: LayoutType, classSize: number, targetSeats: nu
 
 function distribute(state: SeatingState): SeatingState {
   const capacity = state.seats.length;
-  const numbers = shuffle(Array.from({ length: state.classSize }, (_, index) => index + 1));
-  const selectedSeatIds = new Set(shuffle(state.seats.map((seat) => seat.id)).slice(0, Math.min(capacity, state.classSize)));
+  const lockedNumbers = state.seats.filter((seat) => seat.locked && seat.assigned !== null).map((seat) => seat.assigned as number);
+  const numbers = shuffle(Array.from({ length: state.classSize }, (_, index) => index + 1).filter((number) => !lockedNumbers.includes(number)));
+  const availableSeats = shuffle(state.seats.filter((seat) => !seat.locked).map((seat) => seat.id));
+  const selectedSeatIds = new Set(availableSeats.slice(0, Math.min(availableSeats.length, state.classSize - lockedNumbers.length)));
   let numberIndex = 0;
   return {
     ...state,
-    seats: state.seats.map((seat) => ({ ...seat, assigned: selectedSeatIds.has(seat.id) ? numbers[numberIndex++] ?? null : null })),
+    seats: state.seats.map((seat) => seat.locked ? seat : ({ ...seat, assigned: selectedSeatIds.has(seat.id) ? numbers[numberIndex++] ?? null : null })),
   };
 }
 
@@ -358,6 +282,9 @@ function normalizeStoredState(stored: SeatingState): SeatingState {
     seats,
     nextTableNumber: stored.nextTableNumber ?? tables.length + 1,
     nextSeatNumber: seats.length + 1,
+    studentNames: stored.studentNames ?? [],
+    displayMode: stored.displayMode ?? "numbers",
+    planName: stored.planName ?? "Aktuelle Sitzordnung",
   };
 }
 
@@ -370,7 +297,13 @@ export default function Home() {
   const [classSizeInput, setClassSizeInput] = useState(String(DEFAULT_CLASS_SIZE));
   const [targetSeatsInput, setTargetSeatsInput] = useState(String(DEFAULT_TOTAL_SEATS));
   const [drag, setDrag] = useState<DragState>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const [history, setHistory] = useState<SeatingState[]>([]);
+  const [future, setFuture] = useState<SeatingState[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+  const previousState = useRef<SeatingState | null>(null);
+  const restoringHistory = useRef(false);
 
   useEffect(() => {
     try {
@@ -394,6 +327,16 @@ export default function Home() {
   }, [state, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    if (previousState.current && !restoringHistory.current) {
+      setHistory((items) => [...items.slice(-29), previousState.current as SeatingState]);
+      setFuture([]);
+    }
+    previousState.current = state;
+    restoringHistory.current = false;
+  }, [state, hydrated]);
+
+  useEffect(() => {
     // Keep editable drafts in sync with table edits, saved state, and layout changes.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (focusedNumberField !== "classSize") setClassSizeInput(String(state.classSize));
@@ -405,6 +348,77 @@ export default function Home() {
   const emptyCount = Math.max(0, capacity - state.classSize);
   const selectedTable = state.tables.find((table) => table.id === selectedTableId) ?? null;
   const capacityMessage = state.classSize > capacity ? `Es fehlen ${state.classSize - capacity} Plätze.` : "";
+  const studentNames = state.studentNames ?? [];
+  const usesNames = state.displayMode === "names";
+
+  function studentLabel(number: number | null) {
+    if (number === null) return "—";
+    return usesNames && studentNames[number - 1]?.trim() ? studentNames[number - 1].trim() : String(number);
+  }
+
+  function undo() {
+    const previous = history.at(-1);
+    if (!previous) return;
+    restoringHistory.current = true;
+    setHistory((items) => items.slice(0, -1));
+    setFuture((items) => [state, ...items].slice(0, 30));
+    setState(previous);
+    setAnnouncement("Änderung rückgängig gemacht.");
+  }
+
+  function redo() {
+    const next = future[0];
+    if (!next) return;
+    restoringHistory.current = true;
+    setFuture((items) => items.slice(1));
+    setHistory((items) => [...items, state].slice(-30));
+    setState(next);
+    setAnnouncement("Änderung wiederhergestellt.");
+  }
+
+  function updateNames(value: string) {
+    const names = value.split(/\r?\n/).map((name) => name.trim());
+    const count = names.filter(Boolean).length;
+    setState((current) => ({ ...current, studentNames: names, classSize: count || current.classSize }));
+  }
+
+  function savePlan() {
+    const name = window.prompt("Name der gespeicherten Sitzordnung:", state.planName ?? "Sitzordnung");
+    if (!name?.trim()) return;
+    const plan = { ...state, planName: name.trim() };
+    const plans = JSON.parse(window.localStorage.getItem(PLANS_KEY) ?? "[]") as SeatingState[];
+    window.localStorage.setItem(PLANS_KEY, JSON.stringify([...plans.filter((item) => item.planName !== plan.planName), plan]));
+    setState(plan);
+    setAnnouncement(`„${plan.planName}“ wurde gespeichert.`);
+  }
+
+  function loadPlan() {
+    const plans = JSON.parse(window.localStorage.getItem(PLANS_KEY) ?? "[]") as SeatingState[];
+    if (!plans.length) { setAnnouncement("Noch keine gespeicherte Sitzordnung."); return; }
+    const choices = plans.map((plan, index) => `${index + 1}: ${plan.planName ?? "Sitzordnung"}`).join("\n");
+    const answer = window.prompt(`Welche Sitzordnung laden?\n${choices}`, "1");
+    const selected = plans[Number(answer) - 1];
+    if (selected) { setState(normalizeStoredState(selected)); setSelectedSeatId(null); setSelectedTableId(null); setAnnouncement("Gespeicherte Sitzordnung geladen."); }
+  }
+
+  function downloadBackup() {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "sitzordnung-backup.json"; link.click(); URL.revokeObjectURL(url);
+  }
+
+  function restoreBackup(file: File | undefined) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const restored = normalizeStoredState(JSON.parse(String(reader.result)) as SeatingState);
+        setState(restored); setSelectedSeatId(null); setSelectedTableId(null); setAnnouncement("Backup wiederhergestellt.");
+      } catch { setAnnouncement("Die Datei ist kein gültiges Sitzordnungs-Backup."); }
+    };
+    reader.readAsText(file);
+  }
 
   const seatsByTable = useMemo(() => {
     const map = new Map<string, Seat[]>();
@@ -414,7 +428,7 @@ export default function Home() {
 
   function newLayout() {
     if (state.classSize < 1 || state.targetSeats < 1) return;
-    const next = createLayout(state.layoutType, state.classSize, state.targetSeats);
+    const next = { ...createLayout(state.layoutType, state.classSize, state.targetSeats), studentNames: state.studentNames, displayMode: state.displayMode, planName: state.planName };
     setState(next);
     setSelectedTableId(null);
     setSelectedSeatId(null);
@@ -557,6 +571,22 @@ export default function Home() {
     setSelectedSeatId(null);
   }
 
+  function toggleSeatLock(seat: Seat) {
+    setState((current) => ({ ...current, seats: current.seats.map((item) => item.id === seat.id ? { ...item, locked: !item.locked } : item) }));
+    setAnnouncement(seat.locked ? "Platz entsperrt." : "Platz für die nächste Verteilung gesperrt.");
+  }
+
+  function moveSelectedTable(event: KeyboardEvent<HTMLDivElement>, table: Table) {
+    if (event.target !== event.currentTarget) return;
+    const step = event.shiftKey ? 0.03 : 0.01;
+    const direction = event.key === "ArrowLeft" ? [-step, 0] : event.key === "ArrowRight" ? [step, 0] : event.key === "ArrowUp" ? [0, -step] : event.key === "ArrowDown" ? [0, step] : null;
+    if (event.key === "r" || event.key === "R") { setSelectedTableId(table.id); setState((current) => ({ ...current, tables: current.tables.map((item) => item.id === table.id ? { ...item, rotation: (item.rotation + 90) % 360 } : item) })); event.preventDefault(); return; }
+    if (!direction) return;
+    event.preventDefault();
+    setSelectedTableId(table.id);
+    setState((current) => ({ ...current, tables: current.tables.map((item) => item.id === table.id ? { ...item, ...constrainTablePosition(current.layoutType, item.x + direction[0], item.y + direction[1]) } : item) }));
+  }
+
   function exportPng() {
     const canvas = document.createElement("canvas");
     const scale = 2;
@@ -575,11 +605,14 @@ export default function Home() {
     context.font = "600 12px Arial";
     context.textAlign = "center";
     context.fillText("LEHRERPULT", STAGE_W / 2, STAGE_H - 42);
-    createExportPlacements(state.tables).forEach((table) => {
+    context.fillStyle = "#344054";
+    context.font = "700 20px Arial";
+    context.textAlign = "left";
+    context.fillText(state.planName ?? "Sitzordnung", 32, 42);
+    state.tables.forEach((table) => {
       context.save();
-      context.translate(table.x, table.y);
+      context.translate(table.x * STAGE_W, table.y * STAGE_H);
       context.rotate((table.rotation * Math.PI) / 180);
-      context.scale(table.scale, table.scale);
       const width = table.type === "double" ? 88 : 62;
       const height = 48;
       context.fillStyle = "#2f8f87";
@@ -599,8 +632,9 @@ export default function Home() {
         context.strokeStyle = "#d0cbc1";
         context.stroke();
         context.fillStyle = "#344054";
-        context.font = "600 11px Arial";
-        context.fillText(seat.assigned === null ? "—" : String(seat.assigned), seatX, 4);
+        context.font = usesNames ? "600 9px Arial" : "600 11px Arial";
+        const label = studentLabel(seat.assigned);
+        context.fillText(label.length > 13 ? `${label.slice(0, 12)}…` : label, seatX, 4);
       });
       context.restore();
     });
@@ -633,6 +667,13 @@ export default function Home() {
         </div>
         <div className="topbar-actions no-print">
           <span className="saved-status"><span className="status-dot" /> automatisch gespeichert</span>
+          <button className="button button-ghost" disabled={!history.length} onClick={undo} aria-label="Rückgängig">↶</button>
+          <button className="button button-ghost" disabled={!future.length} onClick={redo} aria-label="Wiederholen">↷</button>
+          <button className="button button-ghost" onClick={savePlan}>Speichern</button>
+          <button className="button button-ghost" onClick={loadPlan}>Laden</button>
+          <button className="button button-ghost" onClick={downloadBackup}>Backup</button>
+          <button className="button button-ghost" onClick={() => restoreInputRef.current?.click()}>Import</button>
+          <input ref={restoreInputRef} className="sr-only" type="file" accept="application/json" onChange={(event) => restoreBackup(event.target.files?.[0])} />
           <button className="button button-ghost" onClick={exportPng}>PNG exportieren</button>
           <button className="button button-primary" onClick={() => window.print()}>Drucken / PDF</button>
         </div>
@@ -694,12 +735,24 @@ export default function Home() {
 
           <div className="divider" />
           <div className="section-heading compact">
+            <div><p className="eyebrow">Klassenliste</p><h2>Namen optional</h2></div>
+          </div>
+          <p className="helper-text">Eine Zeile pro Schüler*in. Ohne Namen bleibt die bewährte Nummernansicht aktiv.</p>
+          <textarea id="studentNames" className="names-input" value={studentNames.join("\n")} placeholder={"Anna Beispiel\nBen Muster"} onChange={(event) => updateNames(event.target.value)} />
+          <label className="field-label" htmlFor="displayMode">Anzeige auf den Plätzen</label>
+          <select id="displayMode" className="select-field" value={state.displayMode ?? "numbers"} onChange={(event) => setState((current) => ({ ...current, displayMode: event.target.value as "numbers" | "names" }))}>
+            <option value="numbers">Nummern</option>
+            <option value="names">Namen (falls vorhanden)</option>
+          </select>
+
+          <div className="divider" />
+          <div className="section-heading compact">
             <div>
               <p className="eyebrow">Schritt 02</p>
               <h2>Zahlen verteilen</h2>
             </div>
           </div>
-          <p className="helper-text">Jede Zahl von 1 bis {state.classSize} wird höchstens einmal vergeben. Leere Plätze werden zufällig verteilt.</p>
+          <p className="helper-text">Jede {usesNames ? "Person" : "Zahl"} wird höchstens einmal vergeben. Gesperrte Plätze bleiben bei „Neu erzeugen“ erhalten.</p>
           <button className="button button-dark button-wide" disabled={state.classSize > capacity} onClick={randomize}>Neu erzeugen <span>↻</span></button>
           {capacityMessage && <p className="warning">{capacityMessage} Lege weitere Tische an oder wähle eine kleinere Klasse.</p>}
 
@@ -724,7 +777,7 @@ export default function Home() {
               </div>
             </div>
           )}
-          <p className="helper-text">Tische direkt auf der Fläche ziehen. Zum Tauschen zwei Plätze nacheinander anklicken.</p>
+          <p className="helper-text">Tische ziehen oder mit Pfeiltasten verschieben (Shift = große Schritte, R = drehen). Zwei Plätze anklicken zum Tauschen; mit Schloss fixieren.</p>
         </aside>
 
         <section className="canvas-area">
@@ -740,21 +793,22 @@ export default function Home() {
             </div>
           </div>
           <div className="view-hint"><span className="front-marker">← vorne / Lehrerpult</span><span>Rückwand →</span></div>
-          <div ref={stageRef} className="stage" onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+          <div ref={stageRef} className="stage" onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} aria-label="Sitzplan-Arbeitsfläche">
             <div className="room-label">RÜCKWAND</div>
             <div className="teacher-desk">LEHRERPULT</div>
             {state.tables.map((table) => {
               const selected = selectedTableId === table.id;
               const tableStyle = { left: `${table.x * 100}%`, top: `${table.y * 100}%`, transform: `translate(-50%, -50%) rotate(${table.rotation}deg)` } as CSSProperties;
               return (
-                <div key={table.id} className={`table-cluster ${table.type} ${selected ? "selected" : ""}`} style={tableStyle} onPointerDown={(event) => startDrag(event, table)}>
+                <div key={table.id} tabIndex={0} role="group" aria-label={`${table.id}, ${tableCapacity(table.type)} Plätze`} className={`table-cluster ${table.type} ${selected ? "selected" : ""}`} style={tableStyle} onPointerDown={(event) => startDrag(event, table)} onKeyDown={(event) => moveSelectedTable(event, table)}>
                   <div className="table-caption">{table.id}</div>
                   <div className="table-body"><span className="table-label">{table.type === "double" ? "DOPPELTISCH" : "EINZELTISCH"}</span></div>
                   <div className="seat-row">
                     {(seatsByTable.get(table.id) ?? []).map((seat) => (
-                      <button key={seat.id} className={`seat ${seat.assigned === null ? "empty" : ""} ${selectedSeatId === seat.id ? "seat-selected" : ""}`} title={`Platz ${seat.id}`} onClick={() => clickSeat(seat)}>
+                      <button key={seat.id} className={`seat ${seat.assigned === null ? "empty" : ""} ${selectedSeatId === seat.id ? "seat-selected" : ""} ${seat.locked ? "seat-locked" : ""}`} title={`Platz ${seat.id}: ${studentLabel(seat.assigned)}${seat.locked ? ", gesperrt" : ""}. Klick: tauschen; Doppelklick: sperren.`} aria-label={`Platz ${seat.id}: ${studentLabel(seat.assigned)}${seat.locked ? ", gesperrt" : ""}`} onClick={() => clickSeat(seat)} onDoubleClick={() => toggleSeatLock(seat)}>
                         <span className="seat-id">P{seat.id}</span>
-                        <span className="seat-number">{seat.assigned ?? "—"}</span>
+                        <span className={`seat-number ${usesNames ? "seat-name" : ""}`}>{studentLabel(seat.assigned)}</span>
+                        {seat.locked && <span className="lock-mark" aria-hidden="true">🔒</span>}
                       </button>
                     ))}
                   </div>
@@ -767,7 +821,9 @@ export default function Home() {
             <span><i className="legend-dot filled" /> Nummer vergeben</span>
             <span><i className="legend-dot empty-dot" /> leerer Platz</span>
             <span><i className="legend-dot selected-dot" /> ausgewählt / tauschen</span>
+            <span><i className="legend-dot locked-dot" /> gesperrt</span>
           </div>
+          <p className="sr-only" aria-live="polite">{announcement}</p>
         </section>
       </div>
     </main>
